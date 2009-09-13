@@ -1,0 +1,10 @@
+application: aetycoon
+version: test
+runtime: python
+api_version: 1
+
+# Dummy app.yaml for testing purposes.
+
+handlers:
+- url: /.*
+  script: request.py
