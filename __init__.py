@@ -135,6 +135,19 @@ class LengthProperty(_DerivedProperty):
 
 class KeyProperty(db.Property):
   """A property that stores a key, without automatically dereferencing it.
+  
+  Example usage:
+  
+  >>> class SampleModel(db.Model):
+  ...   sample_key = KeyProperty()
+  
+  >>> model = SampleModel()
+  >>> model.sample_key = db.Key.from_path("Foo", "bar")
+  >>> model.put() # doctest: +ELLIPSIS
+  datastore_types.Key.from_path(u'SampleModel', ...)
+  
+  >>> model.sample_key # doctest: +ELLIPSIS
+  datastore_types.Key.from_path(u'Foo', u'bar', ...)
   """
   def validate(self, value):
     """Validate the value.
@@ -146,6 +159,8 @@ class KeyProperty(db.Property):
     """
     if isinstance(value, basestring):
       value = db.Key(value)
-    if value is not None and not isinstance(value, db.Key):
-      raise TypeError("Property %s must be an instance of db.Key" % self.name)
+    if value is not None:
+      if not isinstance(value, db.Key):
+        raise TypeError("Property %s must be an instance of db.Key"
+                        % (self.name,))
     return super(KeyProperty, self).validate(value)
