@@ -131,3 +131,21 @@ class LengthProperty(_DerivedProperty):
     super(LengthProperty, self).__init__(
         lambda self: len(property.__get__(self, type(self))),
         *args, **kwargs)
+
+
+class KeyProperty(db.Property):
+  """A property that stores a key, without automatically dereferencing it.
+  """
+  def validate(self, value):
+    """Validate the value.
+    
+    Args:
+      value: The value to validate.
+    Returns:
+      A valid key.
+    """
+    if isinstance(value, basestring):
+      value = db.Key(value)
+    if value is not None and not isinstance(value, db.Key):
+      raise TypeError("Property %s must be an instance of db.Key" % self.name)
+    return super(KeyProperty, self).validate(value)

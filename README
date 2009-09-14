@@ -7,3 +7,5 @@ generally useful. They include:
 - DerivedProperty, which allows you to automatically generate values
   - LowerCaseProperty, which stores the lower-cased value of another property
   - LengthProperty, which stores the length of another property
+
+With aetycoon, you'll have all the properties you're ever likely to need.
