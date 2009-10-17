@@ -354,3 +354,25 @@ class SetProperty(db.ListProperty):
   def make_value_from_datastore(self, value):
     if value is not None:
       return set(super(SetProperty, self).make_value_from_datastore(value))
+
+  def get_form_field(self, **kwargs):
+    from django import newforms as forms
+    defaults = {'widget': forms.Textarea,
+                'initial': ''}
+    defaults.update(kwargs)
+    return super(SetProperty, self).get_form_field(**defaults)
+
+  def get_value_for_form(self, instance):
+    value = super(SetProperty, self).get_value_for_form(instance)
+    if not value:
+      return None
+    if isinstance(value, set):
+      value = '\n'.join(value)
+    return value
+
+  def make_value_from_form(self, value):
+    if not value:
+      return []
+    if isinstance(value, basestring):
+      value = value.splitlines()
+    return set(value)
