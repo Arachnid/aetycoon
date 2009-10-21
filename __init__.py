@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import logging
 import pickle
@@ -309,6 +310,11 @@ class PickleProperty(db.Property):
     if value is not None:
       return pickle.loads(str(value))
 
+  def default_value(self):
+    """If possible, copy the value passed in the default= keyword argument.
+    This prevents mutable objects such as dictionaries from being shared across
+    instances."""
+    return copy.copy(self.default)
 
 class SetProperty(db.ListProperty):
   """A property that stores a set of things.
