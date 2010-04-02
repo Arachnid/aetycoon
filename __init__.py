@@ -500,17 +500,17 @@ class ChoiceProperty(db.IntegerProperty):
 
   Example usage:
 
-  >>> ColorChoiceProp = make_choice_property('ColorChoiceProp', ['red', 'green', 'blue'])
-  >>> WeirdChoiceProp = make_choice_property('WeirdChoiceProp', {None:0, 'alpha':1,'beta':4})
   >>> class ChoiceModel(db.Model):
-        a_choice = ColorChoiceProp()
-        b_choice = WeirdChoiceProp()
+  ...   a_choice = ChoiceProperty(enumerate(['red', 'green', 'blue']))
+  ...   b_choice = ChoiceProperty([(0,None), (1,'alpha'), (4,'beta')])
+
+  You interact with choice properties using the choice values:
 
   >>> model = ChoiceModel(a_choice='green')
   >>> model.a_choice
   'green'
-  >>> model.b_choice
-  None
+  >>> model.b_choice == None
+  True
   >>> model.b_choice = 'beta'
   >>> model.b_choice
   'beta'
@@ -522,21 +522,38 @@ class ChoiceProperty(db.IntegerProperty):
   'green'
   >>> model.b_choice
   'beta'
-  >>> ChoiceModel.gql("WHERE a_choice = :1", ColorChoiceProp.c2i('green')).count()
+
+  When filtering on a choice property, use the c2i method to get the index
+  associated with a particular choice:
+
+  >>> green = ChoiceModel.a_choice.c2i('green')
+  >>> ChoiceModel.gql("WHERE a_choice = :1", green).count()
   1
   """
-  @classmethod
-  def get_choices(cls):
-    return cls.CHOICE_TO_INDEX.keys()
+  def __init__(self, choices, *args, **kwargs):
+    """Constructor.
 
-  @classmethod
-  def c2i(cls, choice):
+    Args:
+      choices: A non-empty list of 2-tuples of the form (id, choice). id must be
+        the int to store in the database.  choice may be any hashable value.
+    """
+    super(ChoiceProperty, self).__init__(*args, **kwargs)
+    self.index_to_choice = dict(choices)
+    self.choice_to_index = dict((c,i) for i,c in self.index_to_choice.iteritems())
+
+  def get_choices(self):
+    """Gets a list of values which may be assigned to this property."""
+    return self.choice_to_index.keys()
+
+  def c2i(self, choice):
     """Converts a choice to its datastore representation."""
-    return cls.CHOICE_TO_INDEX[choice]
+    return self.choice_to_index[choice]
 
   def __get__(self, model_instance, model_class):
+    if model_instance is None:
+      return self
     index = super(ChoiceProperty, self).__get__(model_instance, model_class)
-    return self.INDEX_TO_CHOICE[index]
+    return self.index_to_choice[index]
 
   def __set__(self, model_instance, value):
     try:
@@ -553,31 +570,4 @@ class ChoiceProperty(db.IntegerProperty):
   def make_value_from_datastore(self, value):
     if value is None:
       return None
-    return self.INDEX_TO_CHOICE[value]
-
-def make_choice_property(cls_name, choices=None):
-  """Create a new ChoiceProperty.
-
-  If a list of choices is passed, then each element will be encoded as the index
-  at which it appears.
-
-  If a dictionary of choices is passed, then it must map choices to their
-  corresponding unique int value.  This method must be used if choices should
-  not be encoded as 0 to N-1 (as with the list of choices).
-  """
-  if isinstance(choices, list):
-    i2c = choices
-    c2i = dict((c,i) for i,c in enumerate(choices))
-  elif isinstance(choices, dict):
-    for v in choices.itervalues():
-      if not isinstance(v, int):
-        raise TypeError, 'choice dictionary values must be ints: got %s' % (v,)
-    i2c = dict((v,k) for k,v in choices.iteritems())
-    c2i = choices
-  else:
-    raise TypeError, 'choices must be a list or a dictionary'
-
-  new_class_vars = dict(INDEX_TO_CHOICE=i2c,
-                        CHOICE_TO_INDEX=c2i,
-                        data_type=type(i2c[0]))
-  return type(cls_name, (ChoiceProperty,), new_class_vars)
+    return self.index_to_choice[value]
