@@ -490,3 +490,94 @@ class CurrentDomainProperty(db.Property):
           "Domain '%s' attempting to allegally modify data for domain '%s'"
           % (os.environ['HTTP_HOST'], value))
     return value
+
+
+class ChoiceProperty(db.IntegerProperty):
+  """A property for efficiently storing choices made from a finite set.
+
+  This works by mapping each choice to an integer.  The choices must be hashable
+  (so that they can be efficiently mapped back to their corresponding index).
+
+  Example usage:
+
+  >>> ColorChoiceProp = make_choice_property('ColorChoiceProp', ['red', 'green', 'blue'])
+  >>> WeirdChoiceProp = make_choice_property('WeirdChoiceProp', {None:0, 'alpha':1,'beta':4})
+  >>> class ChoiceModel(db.Model):
+        a_choice = ColorChoiceProp()
+        b_choice = WeirdChoiceProp()
+
+  >>> model = ChoiceModel(a_choice='green')
+  >>> model.a_choice
+  'green'
+  >>> model.b_choice
+  None
+  >>> model.b_choice = 'beta'
+  >>> model.b_choice
+  'beta'
+  >>> model.put() # doctest: +ELLIPSIS
+  datastore_types.Key.from_path(u'ChoiceModel', ...)
+
+  >>> model2 = ChoiceModel.all().get()
+  >>> model2.a_choice
+  'green'
+  >>> model.b_choice
+  'beta'
+  >>> ChoiceModel.gql("WHERE a_choice = :1", ColorChoiceProp.c2i('green')).count()
+  1
+  """
+  @classmethod
+  def get_choices(cls):
+    return cls.CHOICE_TO_INDEX.keys()
+
+  @classmethod
+  def c2i(cls, choice):
+    """Converts a choice to its datastore representation."""
+    return cls.CHOICE_TO_INDEX[choice]
+
+  def __get__(self, model_instance, model_class):
+    index = super(ChoiceProperty, self).__get__(model_instance, model_class)
+    return self.INDEX_TO_CHOICE[index]
+
+  def __set__(self, model_instance, value):
+    try:
+      index = self.c2i(value)
+    except KeyError:
+      raise db.BadValueError('Property %s must be one of the allowed choices: %s' %
+                          (self.name, self.get_choices()))
+    super(ChoiceProperty, self).__set__(model_instance, index)
+
+  def get_value_for_datastore(self, model_instance):
+    # just use the underlying value from the parent
+    return super(ChoiceProperty, self).__get__(model_instance, model_instance.__class__)
+
+  def make_value_from_datastore(self, value):
+    if value is None:
+      return None
+    return self.INDEX_TO_CHOICE[value]
+
+def make_choice_property(cls_name, choices=None):
+  """Create a new ChoiceProperty.
+
+  If a list of choices is passed, then each element will be encoded as the index
+  at which it appears.
+
+  If a dictionary of choices is passed, then it must map choices to their
+  corresponding unique int value.  This method must be used if choices should
+  not be encoded as 0 to N-1 (as with the list of choices).
+  """
+  if isinstance(choices, list):
+    i2c = choices
+    c2i = dict((c,i) for i,c in enumerate(choices))
+  elif isinstance(choices, dict):
+    for v in choices.itervalues():
+      if not isinstance(v, int):
+        raise TypeError, 'choice dictionary values must be ints: got %s' % (v,)
+    i2c = dict((v,k) for k,v in choices.iteritems())
+    c2i = choices
+  else:
+    raise TypeError, 'choices must be a list or a dictionary'
+
+  new_class_vars = dict(INDEX_TO_CHOICE=i2c,
+                        CHOICE_TO_INDEX=c2i,
+                        data_type=type(i2c[0]))
+  return type(cls_name, (ChoiceProperty,), new_class_vars)
