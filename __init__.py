@@ -523,10 +523,14 @@ class ChoiceProperty(db.IntegerProperty):
   >>> model.b_choice
   'beta'
 
-  When filtering on a choice property, use the c2i method to get the index
-  associated with a particular choice:
+  To get the int representation of a choice, you may use either access the
+  choice's corresponding attribute or use the c2i method:
+  >>> green = ChoiceModel.a_choice.GREEN
+  >>> none = ChoiceModel.b_choice.c2i(None)
+  >>> (green == 1) and (none == 0)
+  True
 
-  >>> green = ChoiceModel.a_choice.c2i('green')
+  The int representation of a choice is needed to filter on a choice property:
   >>> ChoiceModel.gql("WHERE a_choice = :1", green).count()
   1
   """
