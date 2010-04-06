@@ -3,6 +3,7 @@ import hashlib
 import logging
 import os
 import pickle
+import zlib
 from google.appengine.api import users
 from google.appengine.ext import db
 
@@ -581,3 +582,52 @@ class ChoiceProperty(db.IntegerProperty):
     if value is None:
       return None
     return self.index_to_choice[value]
+
+
+class CompressedDataProperty(db.Property):
+  """A property for storing compressed data or text.
+
+  Example usage:
+
+  >>> class CompressedDataModel(db.Model):
+  ...   ct = CompressedDataProperty()
+
+  You create a compressed data property, simply specifying the data or text:
+
+  >>> model = CompressedDataModel(ct='example uses text too short to compress well')
+  >>> model.ct
+  'example uses text too short to compress well'
+  >>> model.ct = 'green'
+  >>> model.ct
+  'green'
+  >>> model.put() # doctest: +ELLIPSIS
+  datastore_types.Key.from_path(u'CompressedDataModel', ...)
+
+  >>> model2 = CompressedDataModel.all().get()
+  >>> model2.ct
+  'green'
+
+  Compressed data is not indexed and therefore cannot be filtered on:
+
+  >>> CompressedDataModel.gql("WHERE v = :1", 'green').count()
+  0
+  """
+  data_type = db.Blob
+
+  def __init__(self, level=6, *args, **kwargs):
+    """Constructor.
+
+    Args:
+    level: Controls the level of zlib's compression (between 1 and 9).
+    """
+    super(CompressedDataProperty, self).__init__(*args, **kwargs)
+    self.level = level
+
+  def get_value_for_datastore(self, model_instance):
+    value = self.__get__(model_instance, model_instance.__class__)
+    if value is not None:
+      return db.Blob(zlib.compress(value, self.level))
+
+  def make_value_from_datastore(self, value):
+    if value is not None:
+      return zlib.decompress(value)
