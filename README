@@ -9,6 +9,7 @@ generally useful. They include:
   - LengthProperty, which stores the length of another property
 - ChoiceProperty efficiently handles properties which may only be assigned a
   value from a limited set of choices
-- CompressedDataProperty stores your text or data in a compressed form
+- CompressedBlobProperty and CompressedTextProperty store data/text in a
+  compressed form
 
 With aetycoon, you'll have all the properties you're ever likely to need.

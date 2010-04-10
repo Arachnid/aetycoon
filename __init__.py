@@ -584,50 +584,108 @@ class ChoiceProperty(db.IntegerProperty):
     return self.index_to_choice[value]
 
 
-class CompressedDataProperty(db.Property):
-  """A property for storing compressed data or text.
+class CompressedProperty(db.UnindexedProperty):
+  """A unindexed property that is stored in a compressed form.
 
-  Example usage:
-
-  >>> class CompressedDataModel(db.Model):
-  ...   ct = CompressedDataProperty()
-
-  You create a compressed data property, simply specifying the data or text:
-
-  >>> model = CompressedDataModel(ct='example uses text too short to compress well')
-  >>> model.ct
-  'example uses text too short to compress well'
-  >>> model.ct = 'green'
-  >>> model.ct
-  'green'
-  >>> model.put() # doctest: +ELLIPSIS
-  datastore_types.Key.from_path(u'CompressedDataModel', ...)
-
-  >>> model2 = CompressedDataModel.all().get()
-  >>> model2.ct
-  'green'
-
-  Compressed data is not indexed and therefore cannot be filtered on:
-
-  >>> CompressedDataModel.gql("WHERE v = :1", 'green').count()
-  0
+  CompressedTextProperty and CompressedBlobProperty derive from this class.
   """
-  data_type = db.Blob
-
-  def __init__(self, level=6, *args, **kwargs):
+  def __init__(self, level, *args, **kwargs):
     """Constructor.
 
     Args:
     level: Controls the level of zlib's compression (between 1 and 9).
     """
-    super(CompressedDataProperty, self).__init__(*args, **kwargs)
+    super(CompressedProperty, self).__init__(*args, **kwargs)
     self.level = level
 
   def get_value_for_datastore(self, model_instance):
-    value = self.__get__(model_instance, model_instance.__class__)
+    value = self.value_to_str(model_instance)
     if value is not None:
       return db.Blob(zlib.compress(value, self.level))
 
   def make_value_from_datastore(self, value):
     if value is not None:
-      return zlib.decompress(value)
+      ds_value = zlib.decompress(value)
+      return self.str_to_value(ds_value)
+
+  # override value_to_str and str_to_value to implement a new CompressedProperty
+  def value_to_str(self, model_instance):
+    """Returns the value stored by this property encoded as a (byte) string,
+    or None if value is None.  This string will be stored in the datastore.
+    By default, returns the value unchanged."""
+    return self.__get__(model_instance, model_instance.__class__)
+
+  @staticmethod
+  def str_to_value(s):
+    """Reverse of value_to_str.  By default, returns s unchanged."""
+    return s
+
+class CompressedBlobProperty(CompressedProperty):
+  """A byte string that will be stored in a compressed form.
+
+  Example usage:
+
+  >>> class CompressedBlobModel(db.Model):
+  ...   v = CompressedBlobProperty()
+
+  You can create a CompressedBlobProperty and set its value with your raw byte
+  string (anything of type str).  You can also retrieve the (decompressed) value
+  by accessing the field.
+
+  >>> model = CompressedBlobModel(v='\x041\x9f\x11')
+  >>> model.v = 'green'
+  >>> model.v
+  'green'
+  >>> model.put() # doctest: +ELLIPSIS
+  datastore_types.Key.from_path(u'CompressedBlobModel', ...)
+
+  >>> model2 = CompressedBlobModel.all().get()
+  >>> model2.v
+  'green'
+
+  Compressed blobs are not indexed and therefore cannot be filtered on:
+
+  >>> CompressedBlobModel.gql("WHERE v = :1", 'green').count()
+  0
+  """
+  data_type = db.Blob
+
+  def __init__(self, level=6, *args, **kwargs):
+    super(CompressedBlobProperty, self).__init__(level, *args, **kwargs)
+
+class CompressedTextProperty(CompressedProperty):
+  """A string that will be stored in a compressed form (encoded as UTF-8).
+
+  Example usage:
+
+  >>> class CompressedTextModel(db.Model):
+  ...  v = CompressedTextProperty()
+
+  You can create a CompressedTextProperty and set its value with your string.
+  You can also retrieve the (decompressed) value by accessing the field.
+
+  >>> ustr = u'\u043f\u0440\u043e\u0440\u0438\u0446\u0430\u0442\u0435\u043b\u044c'
+  >>> model = CompressedTextModel(v=ustr)
+  >>> model.put() # doctest: +ELLIPSIS
+  datastore_types.Key.from_path(u'CompressedTextModel', ...)
+
+  >>> model2 = CompressedTextModel.all().get()
+  >>> model2.v == ustr
+  True
+
+  Compressed text is not indexed and therefore cannot be filtered on:
+
+  >>> CompressedTextModel.gql("WHERE v = :1", ustr).count()
+  0
+  """
+  data_type = db.Text
+
+  def __init__(self, level=6, *args, **kwargs):
+    super(CompressedTextProperty, self).__init__(level, *args, **kwargs)
+
+  def value_to_str(self, model_instance):
+    return self.__get__(model_instance, model_instance.__class__).encode('utf-8')
+
+  @staticmethod
+  def str_to_value(s):
+    return s.decode('utf-8')
