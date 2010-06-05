@@ -11,5 +11,6 @@ generally useful. They include:
   value from a limited set of choices
 - CompressedBlobProperty and CompressedTextProperty store data/text in a
   compressed form
-
+- ArrayProperty store array.array objects for lean and efficient POD type
+  storage
 With aetycoon, you'll have all the properties you're ever likely to need.
