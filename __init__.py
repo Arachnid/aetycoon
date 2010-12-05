@@ -689,3 +689,25 @@ class CompressedTextProperty(CompressedProperty):
   @staticmethod
   def str_to_value(s):
     return s.decode('utf-8')
+
+class DerivedDateProperty(db.DateProperty):
+  """A date which is derived from a datetime property on the same model.
+
+  This is useful when you want to denormalize by storing a plain date which can
+  be queried for equality (while also preserving the more detailed time
+  information in the original datetime property).
+
+  This could also be accomplished with a normal DerivedProperty, though the
+  return type would be datetime rather than a plain date.
+  """
+  def __init__(self, dt_prop_name, *args, **kwargs):
+    super(DerivedDateProperty, self).__init__(*args, **kwargs)
+    self.dt_prop_name = dt_prop_name
+
+  def __get__(self, model_instance, model_class):
+    if model_instance is None:
+      return self
+    return getattr(model_instance, self.dt_prop_name).date()
+
+  def __set__(self, model_instance, value):
+    raise db.DerivedPropertyError("Cannot assign to a DerivedProperty")
