@@ -1,4 +1,5 @@
 import copy
+import datetime
 import hashlib
 import logging
 import os
@@ -711,3 +712,87 @@ class DerivedDateProperty(db.DateProperty):
 
   def __set__(self, model_instance, value):
     raise db.DerivedPropertyError("Cannot assign to a DerivedProperty")
+
+class UTC_tzinfo(datetime.tzinfo):
+    def utcoffset(self, dt):
+        return datetime.timedelta(0)
+
+    def dst(self, dt):
+        return datetime.timedelta(0)
+
+    def tzname(self, dt):
+        return "UTC"
+
+# source: http://code.google.com/appengine/docs/python/datastore/typesandpropertyclasses.html
+class PT_tzinfo(datetime.tzinfo):
+  """Implementation of the Pacific timezone."""
+  def utcoffset(self, dt):
+    return datetime.timedelta(hours=-8) + self.dst(dt)
+
+  def _FirstSunday(self, dt):
+    """First Sunday on or after dt."""
+    return dt + datetime.timedelta(days=(6-dt.weekday()))
+
+  def dst(self, dt):
+    # 2 am on the second Sunday in March
+    dst_start = self._FirstSunday(datetime.datetime(dt.year, 3, 8, 2))
+    # 1 am on the first Sunday in November
+    dst_end = self._FirstSunday(datetime.datetime(dt.year, 11, 1, 1))
+
+    if dst_start <= dt.replace(tzinfo=None) < dst_end:
+      return datetime.timedelta(hours=1)
+    else:
+      return datetime.timedelta(hours=0)
+
+    def tzname(self, dt):
+      if self.dst(dt) == datetime.timedelta(hours=0):
+        return "PST"
+      else:
+        return "PDT"
+
+TZ_UTC = UTC_tzinfo()
+TZ_PT = PT_tzinfo()
+
+def naive_dt_to_pt(naive_dt):
+    """
+    Takes a naive datetime object, assigns UTC timezone to it, and then
+    converts it to pacific time.  This is appropriate for datetime objects
+    which are retrieved from the datastore (they never include TZ info and
+    are ALWAYS in UTC, even if the object being put had other TZ info attached).
+    """
+    utc_dt = naive_dt.replace(tzinfo=TZ_UTC)
+    return utc_dt.astimezone(TZ_PT)
+
+class PacificDateTimeProperty(db.DateTimeProperty):
+  """A DateTimeProperty whose value is always returned in Pacific time.
+
+  Example usage:
+
+  >>> class TestModel(db.Model):
+  ...   dt = PacificDateTimeProperty()
+  ...   date = DerivedDateProperty('dt')
+
+  >>> dt = datetime.datetime(2010, 03, 25, 4, 0, 0)  # 4am UTC on 2010-Mar-25
+  >>> e = TestModel(dt=dt)
+  >>> e.put() # doctest: +ELLIPSIS
+  datastore_types.Key.from_path(u'TestModel', ...)
+
+  >>> print e.dt
+  2010-03-24 21:00:00-07:00
+
+  >>> print e.date
+  2010-03-24
+  """
+  def __get__(self, model_instance, model_class):
+    if model_instance is None:
+      return self
+    dt = super(PacificDateTimeProperty, self).__get__(model_instance, model_class)
+    if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
+      return naive_dt_to_pt(dt)
+    else:
+      return dt  # don't convert it if it has already been converted
+
+  def make_value_from_datastore(self, value):
+    if value is None:
+      return None
+    return naive_dt_to_pt(value)
