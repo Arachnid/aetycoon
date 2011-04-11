@@ -685,10 +685,15 @@ class CompressedTextProperty(CompressedProperty):
     super(CompressedTextProperty, self).__init__(level, *args, **kwargs)
 
   def value_to_str(self, model_instance):
-    return self.__get__(model_instance, model_instance.__class__).encode('utf-8')
+    v = self.__get__(model_instance, model_instance.__class__)
+    if v is None:
+      return v
+    return v.encode('utf-8')
 
   @staticmethod
   def str_to_value(s):
+    if s is None:
+      return None
     return s.decode('utf-8')
 
 class DerivedDateProperty(db.DateProperty):
