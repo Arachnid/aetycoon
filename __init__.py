@@ -356,7 +356,7 @@ class SetProperty(db.ListProperty):
       return set(super(SetProperty, self).make_value_from_datastore(value))
 
   def get_form_field(self, **kwargs):
-    from django import newforms as forms
+    from django import forms
     defaults = {'widget': forms.Textarea,
                 'initial': ''}
     defaults.update(kwargs)
