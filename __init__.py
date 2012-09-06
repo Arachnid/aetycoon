@@ -14,13 +14,19 @@
 
 import array
 import copy
-import hashlib
 import logging
 import os
 import pickle
 import zlib
+
 from google.appengine.api import users
 from google.appengine.ext import db
+
+from django import forms
+from django.forms.util import flatatt
+from django.utils.html import conditional_escape
+from django.utils.encoding import force_unicode
+from django.utils.safestring import mark_safe
 
 
 def DerivedProperty(func=None, *args, **kwargs):
@@ -128,6 +134,23 @@ class LowerCaseProperty(_DerivedProperty):
     super(LowerCaseProperty, self).__init__(
         lambda self: property.__get__(self, type(self)).lower(),
         *args, **kwargs)
+    self.prop = property
+
+  def get_form_field(self, form_class=forms.CharField, **kwargs):
+    """Return a Django form field appropriate for a LowerCase property.
+    """
+    defaults = {}
+    defaults['required'] = self.required
+    defaults['widget'] = forms.widgets.TextInput(attrs={
+      'disabled': 'disabled',
+      'value': 'Lower case %s' % self.prop.name,
+    })
+    if self.verbose_name:
+      defaults['label'] = self.verbose_name.capitalize().replace('_', ' ')
+    if self.default is not None:
+      defaults['initial'] = self.default
+    defaults.update(kwargs)
+    return form_class(**defaults)
 
 
 class LengthProperty(_DerivedProperty):
@@ -334,6 +357,29 @@ class PickleProperty(db.Property):
     instances."""
     return copy.copy(self.default)
 
+  def get_form_field(self, form_class=forms.CharField, **kwargs):
+    """Return a Django form field appropriate for a Pickle property.
+    """
+    defaults = {}
+    defaults['required'] = self.required
+    defaults['widget'] = PickleWidget
+    if self.verbose_name:
+      defaults['label'] = self.verbose_name.capitalize().replace('_', ' ')
+    if self.default is not None:
+      defaults['initial'] = self.default
+    defaults.update(kwargs)
+    return form_class(**defaults)
+
+  def make_value_from_form(self, value):
+    """Convert a form value to a PickleProperty value."""
+    from decimal import Decimal
+    try:
+      return eval(value, {'__builtins__': None}, {'Decimal': Decimal})
+    except Exception:
+      logging.exception('Could not convert value for saving, using None.')
+      raise forms.ValidationError('Could not pickle set value.')
+
+
 class SetProperty(db.ListProperty):
   """A property that stores a set of things.
 
@@ -408,66 +454,66 @@ class InvalidDomainError(Exception):
 
 class CurrentDomainProperty(db.Property):
   """A property that restricts access to the current domain.
-  
+
   Example usage:
-  
+
   >>> class DomainModel(db.Model):
   ...   domain = CurrentDomainProperty()
-  
+
   >>> os.environ['HTTP_HOST'] = 'domain1'
   >>> model = DomainModel()
-  
+
   The domain is set automatically:
-  
+
   >>> model.domain
   u'domain1'
-  
+
   You cannot change the domain:
-  
+
   >>> model.domain = 'domain2'  # doctest: +ELLIPSIS
   Traceback (most recent call last):
       ...
   InvalidDomainError: Domain 'domain1' attempting to illegally access data for domain 'domain2'
-  
+
   >>> key = model.put()
   >>> model = DomainModel.get(key)
   >>> model.domain
   u'domain1'
-  
+
   You cannot write the data from another domain:
-  
+
   >>> os.environ['HTTP_HOST'] = 'domain2'
   >>> model.put() # doctest: +ELLIPSIS
   Traceback (most recent call last):
       ...
   InvalidDomainError: Domain 'domain2' attempting to allegally modify data for domain 'domain1'
-  
+
   Nor can you read it:
-  
+
   >>> DomainModel.get(key)  # doctest: +ELLIPSIS
   Traceback (most recent call last):
       ...
   InvalidDomainError: Domain 'domain2' attempting to illegally access data for domain 'domain1'
-  
+
   Admin users can read and write data for other domains:
-  
+
   >>> os.environ['USER_IS_ADMIN'] = '1'
   >>> model = DomainModel.get(key)
   >>> model.put()  # doctest: +ELLIPSIS
   datastore_types.Key.from_path(u'DomainModel', ...)
-  
+
   You can also define models that should permit read or write access from
   other domains:
-  
+
   >>> os.environ['USER_IS_ADMIN'] = '0'
   >>> class DomainModel2(db.Model):
   ...   domain = CurrentDomainProperty(allow_read=True, allow_write=True)
-  
+
   >>> model = DomainModel2()
   >>> model.domain
   u'domain2'
   >>> key = model.put()
-  
+
   >>> os.environ['HTTP_HOST'] = 'domain3'
   >>> model = DomainModel2.get(key)
   >>> model.put()  # doctest: +ELLIPSIS
@@ -476,7 +522,7 @@ class CurrentDomainProperty(db.Property):
 
   def __init__(self, allow_read=False, allow_write=False, *args, **kwargs):
     """Constructor.
-    
+
     Args:
       allow_read: If True, allow entities with this property to be read, but not
         written, from other domains.
@@ -561,9 +607,9 @@ class ChoiceProperty(db.IntegerProperty):
     """
     super(ChoiceProperty, self).__init__(*args, **kwargs)
     self.index_to_choice = dict(choices)
-    self.choice_to_index = dict((c,i) for i,c in self.index_to_choice.iteritems())
+    self.choice_to_index = dict((c, i) for i, c in self.index_to_choice.iteritems())
     if make_choice_attrs:
-      for i,c in self.index_to_choice.iteritems():
+      for i, c in self.index_to_choice.iteritems():
         if isinstance(c, basestring):
           setattr(self, c.upper(), i)
 
@@ -635,6 +681,7 @@ class CompressedProperty(db.UnindexedProperty):
     """Reverse of value_to_str.  By default, returns s unchanged."""
     return s
 
+
 class CompressedBlobProperty(CompressedProperty):
   """A byte string that will be stored in a compressed form.
 
@@ -667,6 +714,7 @@ class CompressedBlobProperty(CompressedProperty):
 
   def __init__(self, level=6, *args, **kwargs):
     super(CompressedBlobProperty, self).__init__(level, *args, **kwargs)
+
 
 class CompressedTextProperty(CompressedProperty):
   """A string that will be stored in a compressed form (encoded as UTF-8).
@@ -704,6 +752,7 @@ class CompressedTextProperty(CompressedProperty):
   @staticmethod
   def str_to_value(s):
     return s.decode('utf-8')
+
 
 class ArrayProperty(db.UnindexedProperty):
   """An array property that is stored as a string.
@@ -756,3 +805,15 @@ class ArrayProperty(db.UnindexedProperty):
   def default_value(self):
     return array.array(self._typecode,
                        super(ArrayProperty, self).default_value())
+
+
+PICKLE_WIDGET_HELP_TEXT = 'Only Decimals and python standard data types can be used in a pickled value.'
+
+
+class PickleWidget(forms.Textarea):
+  def render(self, name, value, attrs=None):
+    if value is None:
+      value = {}
+    final_attrs = self.build_attrs(attrs, name=name)
+    return mark_safe(u'<textarea%s>%s</textarea><div class="help_text">%s</div>'
+      % (flatatt(final_attrs), conditional_escape(force_unicode(value)), PICKLE_WIDGET_HELP_TEXT))
