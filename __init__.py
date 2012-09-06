@@ -815,5 +815,52 @@ class PickleWidget(forms.Textarea):
     if value is None:
       value = {}
     final_attrs = self.build_attrs(attrs, name=name)
+    if isinstance(value, dict):
+      pretty_value = ''.join(pretty_dict(value, indent=4))
+    elif isinstance(value, (list, tuple)):
+      pretty_value = ''.join(pretty_list(value, indent=4))
+    else:
+      pretty_value = value
     return mark_safe(u'<textarea%s>%s</textarea><div class="help_text">%s</div>'
-      % (flatatt(final_attrs), conditional_escape(force_unicode(value)), PICKLE_WIDGET_HELP_TEXT))
+      % (flatatt(final_attrs), conditional_escape(force_unicode(pretty_value)), PICKLE_WIDGET_HELP_TEXT))
+
+
+def pretty_dict(d, indent=0, nest_level=1):
+  '''List-format string output to display a dict in a readable format.'''
+  sorted_items = d.items()
+  sorted_items.sort(key=lambda x: x[0])
+
+  output = ['{\n']
+  for k, v in sorted_items:
+    output.append('{indent}{key}: '.format(indent=' ' * indent * nest_level, key=repr(k)))
+    _pretty_merge_into_output(output, v, indent, nest_level)
+  output.append(' ' * (indent * (nest_level - 1) + indent / 2) + '}')
+  return output
+
+
+def pretty_list(l, indent=0, nest_level=1):
+  '''List-format string output to display a list or tuple in a readable format.'''
+  if isinstance(l, list):
+    output = ['[\n']
+  else:
+    output = ['(\n']
+  for v in l:
+    output.append(' ' * indent * nest_level)
+    _pretty_merge_into_output(output, v, indent, nest_level)
+  output.append(' ' * (indent * (nest_level - 1) + indent / 2))
+  if isinstance(l, list):
+    output.append(']')
+  else:
+    output.append(')')
+  return output
+
+
+def _pretty_merge_into_output(output, v, indent, nest_level):
+  '''Local use to merge known vaues into a pretty output.'''
+  if isinstance(v, dict):
+    output += pretty_dict(v, indent=indent, nest_level=nest_level + 1)
+  elif isinstance(v, (list, tuple)):
+    output += pretty_list(v, indent=indent, nest_level=nest_level + 1)
+  else:
+    output.append(repr(v))
+  output.append(",\n")
