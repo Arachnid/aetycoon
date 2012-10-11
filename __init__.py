@@ -22,12 +22,6 @@ import zlib
 from google.appengine.api import users
 from google.appengine.ext import db
 
-from django import forms
-from django.forms.util import flatatt
-from django.utils.html import conditional_escape
-from django.utils.encoding import force_unicode
-from django.utils.safestring import mark_safe
-
 
 def DerivedProperty(func=None, *args, **kwargs):
   """Implements a 'derived' datastore property.
@@ -136,21 +130,31 @@ class LowerCaseProperty(_DerivedProperty):
         *args, **kwargs)
     self.prop = property
 
-  def get_form_field(self, form_class=forms.CharField, **kwargs):
-    """Return a Django form field appropriate for a LowerCase property.
+  @staticmethod
+  def wtforms_convert(model, prop, kwargs):
+    """Return a wtforms field appropriate for a LowerCase property.
     """
-    defaults = {}
-    defaults['required'] = self.required
-    defaults['widget'] = forms.widgets.TextInput(attrs={
-      'disabled': 'disabled',
-      'value': 'Lower case %s' % self.prop.name,
-    })
-    if self.verbose_name:
-      defaults['label'] = self.verbose_name.capitalize().replace('_', ' ')
-    if self.default is not None:
-      defaults['initial'] = self.default
-    defaults.update(kwargs)
-    return form_class(**defaults)
+    from appengine_admin import wtforms
+    from wtforms import fields, widgets
+
+    class DisabledTextWidget(widgets.Input):
+      def __call__(widget, field, **kwargs):
+        value = 'Lower case <strong>%s</strong>' % prop.prop.name
+        kwargs['class'] = (kwargs.pop('class', '') + ' div-input').strip()
+        return widgets.core.HTMLString(
+          u'<div %s>%s</div><div class="help_text">%s</div>'
+          % (widgets.core.html_params(name=field.name, **kwargs), value, LOWER_CASE_WIDGET_HELP_TEXT))
+
+    class LowerCaseDerivedField(fields.TextField):
+      readonly = True
+      widget = DisabledTextWidget()
+
+      def _value(field):
+        value = prop.prop.__get__(prop, type(prop))
+        value = value.lower() if value else None
+        return value
+
+    return LowerCaseDerivedField(**kwargs)
 
 
 class LengthProperty(_DerivedProperty):
@@ -357,27 +361,52 @@ class PickleProperty(db.Property):
     instances."""
     return copy.copy(self.default)
 
-  def get_form_field(self, form_class=forms.CharField, **kwargs):
-    """Return a Django form field appropriate for a Pickle property.
+  @staticmethod
+  def wtforms_convert(model, prop, kwargs):
+    """Return a wtforms field appropriate for a Pickle property.
     """
-    defaults = {}
-    defaults['required'] = self.required
-    defaults['widget'] = PickleWidget
-    if self.verbose_name:
-      defaults['label'] = self.verbose_name.capitalize().replace('_', ' ')
-    if self.default is not None:
-      defaults['initial'] = self.default
-    defaults.update(kwargs)
-    return form_class(**defaults)
+    from appengine_admin import wtforms
+    from wtforms import fields, widgets
 
-  def make_value_from_form(self, value):
-    """Convert a form value to a PickleProperty value."""
-    from decimal import Decimal
-    try:
-      return eval(value, {'__builtins__': None}, {'Decimal': Decimal})
-    except Exception:
-      logging.exception('Could not convert value for saving, using None.')
-      raise forms.ValidationError('Could not pickle set value.')
+    class PickleField(fields.TextAreaField):
+      widget = pickle_widget
+
+      def _value(field):
+        """Convert a form value to a PickleProperty value."""
+        if field.raw_data:
+          value = field.raw_data
+        else:
+          value = field.data
+        # If submitted differently, the value may not be a string => return directly
+        if not isinstance(value, basestring):
+          return value
+        from decimal import Decimal
+        try:
+          return eval(value, {'__builtins__': None}, {'Decimal': Decimal})
+        except Exception:
+          logging.exception('Could not convert value for saving, using None.')
+          raise ValueError('Could not pickle set value.')
+    return PickleField(**kwargs)
+
+
+def pickle_widget(field, *args, **kwargs):
+  kwargs.setdefault('rows', '10')
+  kwargs.setdefault('cols', '40')
+  value = field._value()
+  if value is None:
+    value = {}
+  if isinstance(value, dict):
+    pretty_value = ''.join(pretty_dict(value, indent=4))
+  elif isinstance(value, (list, tuple)):
+    pretty_value = ''.join(pretty_list(value, indent=4))
+  else:
+    pretty_value = value
+  from cgi import escape
+  from appengine_admin import wtforms
+  from wtforms import widgets
+  return widgets.core.HTMLString(
+    u'<textarea %s>%s</textarea><div class="help_text">%s</div>'
+    % (widgets.core.html_params(name=field.name, **kwargs), escape(pretty_value), PICKLE_WIDGET_HELP_TEXT))
 
 
 class SetProperty(db.ListProperty):
@@ -425,27 +454,40 @@ class SetProperty(db.ListProperty):
     if value is not None:
       return set(super(SetProperty, self).make_value_from_datastore(value))
 
-  def get_form_field(self, **kwargs):
-    from django import newforms as forms
-    defaults = {'widget': forms.Textarea,
-                'initial': ''}
-    defaults.update(kwargs)
-    return super(SetProperty, self).get_form_field(**defaults)
+  @staticmethod
+  def wtforms_convert(model, prop, kwargs):
+    """Return a wtforms field appropriate for a Pickle property.
+    """
+    from appengine_admin import wtforms
+    from wtforms import fields, validators
 
-  def get_value_for_form(self, instance):
-    value = super(SetProperty, self).get_value_for_form(instance)
-    if not value:
-      return None
-    if isinstance(value, set):
-      value = '\n'.join(value)
-    return value
+    def validate_set(form, field):
+      try:
+        prop.validate_list_contents(field.data)
+      except db.BadValueError as e:
+        raise validators.ValidationError(*e.args)
 
-  def make_value_from_form(self, value):
-    if not value:
-      return []
-    if isinstance(value, basestring):
-      value = value.splitlines()
-    return set(value)
+    class SetField(fields.TextAreaField):
+      """A field for ``SetProperty``."""
+      def __init__(self, label=None, validators=None, **kwargs):
+        validators = validators or []
+        validators.append(validate_set)
+        super(SetField, self).__init__(label=label, validators=validators, **kwargs)
+
+      def _value(field):
+        if field.raw_data:
+          return field.raw_data[0]
+        else:
+          return field.data and '\n'.join(map(str, set(field.data))) or ''
+
+      def process_formdata(self, valuelist):
+        if valuelist:
+          try:
+            self.data = valuelist[0].splitlines()
+            self.data = set(map(prop.item_type, self.data))
+          except ValueError:
+            raise ValueError(self.gettext('Not a valid set'))
+    return SetField(**kwargs)
 
 
 class InvalidDomainError(Exception):
@@ -632,7 +674,7 @@ class ChoiceProperty(db.IntegerProperty):
       index = self.c2i(value)
     except KeyError:
       raise db.BadValueError('Property %s must be one of the allowed choices: %s' %
-                          (self.name, self.get_choices()))
+                             (self.name, self.get_choices()))
     super(ChoiceProperty, self).__set__(model_instance, index)
 
   def get_value_for_datastore(self, model_instance):
@@ -806,27 +848,14 @@ class ArrayProperty(db.UnindexedProperty):
     return array.array(self._typecode,
                        super(ArrayProperty, self).default_value())
 
-
+LOWER_CASE_WIDGET_HELP_TEXT = 'This value is derived by lowercasing another property.'
 PICKLE_WIDGET_HELP_TEXT = 'Only Decimals and python standard data types can be used in a pickled value.'
-
-
-class PickleWidget(forms.Textarea):
-  def render(self, name, value, attrs=None):
-    if value is None:
-      value = {}
-    final_attrs = self.build_attrs(attrs, name=name)
-    if isinstance(value, dict):
-      pretty_value = ''.join(pretty_dict(value, indent=4))
-    elif isinstance(value, (list, tuple)):
-      pretty_value = ''.join(pretty_list(value, indent=4))
-    else:
-      pretty_value = value
-    return mark_safe(u'<textarea%s>%s</textarea><div class="help_text">%s</div>'
-      % (flatatt(final_attrs), conditional_escape(force_unicode(pretty_value)), PICKLE_WIDGET_HELP_TEXT))
 
 
 def pretty_dict(d, indent=0, nest_level=1):
   '''List-format string output to display a dict in a readable format.'''
+  if not d:
+    return '{}'
   sorted_items = d.items()
   sorted_items.sort(key=lambda x: x[0])
 
@@ -840,6 +869,8 @@ def pretty_dict(d, indent=0, nest_level=1):
 
 def pretty_list(l, indent=0, nest_level=1):
   '''List-format string output to display a list or tuple in a readable format.'''
+  if not l:
+    return '[]' if isinstance(l, list) else 'tuple()'
   if isinstance(l, list):
     output = ['[\n']
   else:
