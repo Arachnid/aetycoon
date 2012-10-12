@@ -94,6 +94,7 @@ class _DerivedProperty(db.Property):
       func: A function that takes one argument, the model instance, and
         returns a calculated value.
     """
+    self.placeholder = kwargs.pop('placeholder', 'Derived property')
     super(_DerivedProperty, self).__init__(*args, **kwargs)
     self.derive_func = derive_func
 
@@ -375,6 +376,8 @@ class PickleProperty(db.Property):
         """Convert a form value to a PickleProperty value."""
         if field.raw_data:
           value = field.raw_data
+          if isinstance(value, list):
+              value = value[0]
         else:
           value = field.data
         # If submitted differently, the value may not be a string => return directly
@@ -386,6 +389,10 @@ class PickleProperty(db.Property):
         except Exception:
           logging.exception('Could not convert value for saving, using None.')
           raise ValueError('Could not pickle set value.')
+
+      def process_formdata(self, valuelist):
+        if valuelist:
+          self.data = valuelist[0]
     return PickleField(**kwargs)
 
 
@@ -589,7 +596,7 @@ class CurrentDomainProperty(db.Property):
     value = super(CurrentDomainProperty, self).get_value_for_datastore(
         model_instance)
     if (value != os.environ['HTTP_HOST'] and not users.is_current_user_admin()
-        and not self.allow_write):
+          and not self.allow_write):
       raise InvalidDomainError(
           "Domain '%s' attempting to allegally modify data for domain '%s'"
           % (os.environ['HTTP_HOST'], value))
