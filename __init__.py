@@ -94,7 +94,6 @@ class _DerivedProperty(db.Property):
       func: A function that takes one argument, the model instance, and
         returns a calculated value.
     """
-    self.placeholder = kwargs.pop('placeholder', 'Derived property')
     super(_DerivedProperty, self).__init__(*args, **kwargs)
     self.derive_func = derive_func
 
