@@ -380,6 +380,9 @@ class PickleProperty(db.Property):
         else:
           value = field.data
         # If submitted differently, the value may not be a string => return directly
+        return field._value_to_object(value)
+
+      def _value_to_object(self, value):
         if not isinstance(value, basestring):
           return value
         from decimal import Decimal
@@ -391,7 +394,7 @@ class PickleProperty(db.Property):
 
       def process_formdata(self, valuelist):
         if valuelist:
-          self.data = valuelist[0]
+          self.data = self._value_to_object(valuelist[0])
     return PickleField(**kwargs)
 
 
@@ -401,12 +404,7 @@ def pickle_widget(field, *args, **kwargs):
   value = field._value()
   if value is None:
     value = {}
-  if isinstance(value, dict):
-    pretty_value = ''.join(pretty_dict(value, indent=4))
-  elif isinstance(value, (list, tuple)):
-    pretty_value = ''.join(pretty_list(value, indent=4))
-  else:
-    pretty_value = value
+  pretty_value = ''.join(prettify(value))
   from cgi import escape
   from appengine_admin import wtforms
   from wtforms import widgets
@@ -861,43 +859,84 @@ PICKLE_WIDGET_HELP_TEXT = 'Only Decimals and python standard data types can be u
 def pretty_dict(d, indent=0, nest_level=1):
   '''List-format string output to display a dict in a readable format.'''
   if not d:
-    return '{}'
+    yield '{}'
+    return
   sorted_items = d.items()
   sorted_items.sort(key=lambda x: x[0])
 
-  output = ['{\n']
+  yield '{\n'
+  first = True
   for k, v in sorted_items:
-    output.append('{indent}{key}: '.format(indent=' ' * indent * nest_level, key=repr(k)))
-    _pretty_merge_into_output(output, v, indent, nest_level)
-  output.append(' ' * (indent * (nest_level - 1) + indent / 2) + '}')
-  return output
+    if not first:
+      yield ",\n"
+    else:
+      first = False
+    if isinstance(k, unicode):
+      try:
+        repr_k = repr(str(k))
+      except UnicodeEncodeError:
+        repr_k = repr(k)
+    else:
+      repr_k = repr(k)
+    yield '{indent}{key}: '.format(indent=' ' * indent * nest_level, key=repr_k)
+    yield _pretty_merge_value(v, indent, nest_level)
+  yield "\n"
+  yield ' ' * indent * (nest_level - 1) + '}'
 
 
 def pretty_list(l, indent=0, nest_level=1):
   '''List-format string output to display a list or tuple in a readable format.'''
   if not l:
-    return '[]' if isinstance(l, list) else 'tuple()'
+    yield '[]' if isinstance(l, list) else 'tuple()'
+    return
   if isinstance(l, list):
-    output = ['[\n']
+    yield '[\n'
   else:
-    output = ['(\n']
+    yield '(\n'
+  first = True
   for v in l:
-    output.append(' ' * indent * nest_level)
-    _pretty_merge_into_output(output, v, indent, nest_level)
-  output.append(' ' * (indent * (nest_level - 1) + indent / 2))
+    if not first:
+      yield ",\n"
+    else:
+      first = False
+    yield ' ' * indent * nest_level
+    yield _pretty_merge_value(v, indent, nest_level)
+  yield "\n"
+  yield ' ' * indent * (nest_level - 1)
   if isinstance(l, list):
-    output.append(']')
+    yield ']'
   else:
-    output.append(')')
-  return output
+    yield ')'
 
 
-def _pretty_merge_into_output(output, v, indent, nest_level):
+def _pretty_merge_value(v, indent, nest_level):
   '''Local use to merge known vaues into a pretty output.'''
   if isinstance(v, dict):
-    output += pretty_dict(v, indent=indent, nest_level=nest_level + 1)
+    yield pretty_dict(v, indent=indent, nest_level=nest_level + 1)
   elif isinstance(v, (list, tuple)):
-    output += pretty_list(v, indent=indent, nest_level=nest_level + 1)
+    yield pretty_list(v, indent=indent, nest_level=nest_level + 1)
+  elif isinstance(v, unicode):  # Take out the u'' when unnecessary
+    try:
+      yield repr(str(v))
+    except UnicodeEncodeError:
+      yield repr(v)
+  elif isinstance(v, long):  # Take out the L when unnecessary
+    yield repr(int(v))
   else:
-    output.append(repr(v))
-  output.append(",\n")
+    yield repr(v)
+
+
+def list_pretty_iterator(pretty_iter):
+  l = []
+  from types import GeneratorType
+  for pretty_val in pretty_iter:
+    if isinstance(pretty_val, GeneratorType):
+      for iter_pretty_val in pretty_val:
+        l += list_pretty_iterator(iter_pretty_val)
+    else:
+      l.append(pretty_val)
+  return l
+
+
+def prettify(data, indent=4, nest_level=0):
+  return list_pretty_iterator(_pretty_merge_value(data, indent=indent, nest_level=nest_level))
