@@ -128,6 +128,7 @@ class LowerCaseProperty(_DerivedProperty):
     super(LowerCaseProperty, self).__init__(
         lambda self: property.__get__(self, type(self)).lower(),
         *args, **kwargs)
+    ### BEGIN HUMBLE BUNDLE CODE CHANGE
     self.prop = property
 
   @staticmethod
@@ -155,6 +156,7 @@ class LowerCaseProperty(_DerivedProperty):
         return value
 
     return LowerCaseDerivedField(**kwargs)
+    ### END HUMBLE BUNDLE CODE CHANGE
 
 
 class LengthProperty(_DerivedProperty):
@@ -361,6 +363,7 @@ class PickleProperty(db.Property):
     instances."""
     return copy.copy(self.default)
 
+  ### BEGIN END HUMBLE BUNDLE CODE CHANGE
   @staticmethod
   def wtforms_convert(model, prop, kwargs):
     """Return a wtforms field appropriate for a Pickle property.
@@ -413,6 +416,7 @@ def pickle_widget(field, *args, **kwargs):
     % (widgets.core.html_params(name=field.name, **kwargs), escape(pretty_value), PICKLE_WIDGET_HELP_TEXT))
 
 
+### END HUMBLE BUNDLE CODE CHANGE
 class SetProperty(db.ListProperty):
   """A property that stores a set of things.
 
@@ -458,6 +462,7 @@ class SetProperty(db.ListProperty):
     if value is not None:
       return set(super(SetProperty, self).make_value_from_datastore(value))
 
+  ### BEGIN HUMBLE BUNDLE CODE CHANGE
   @staticmethod
   def wtforms_convert(model, prop, kwargs):
     """Return a wtforms field appropriate for a Pickle property.
@@ -492,6 +497,7 @@ class SetProperty(db.ListProperty):
           except ValueError:
             raise ValueError(self.gettext('Not a valid set'))
     return SetField(**kwargs)
+    ### END HUMBLE BUNDLE CODE CHANGE
 
 
 class InvalidDomainError(Exception):
@@ -852,6 +858,7 @@ class ArrayProperty(db.UnindexedProperty):
     return array.array(self._typecode,
                        super(ArrayProperty, self).default_value())
 
+### BEGIN HUMBLE BUNDLE CODE CHANGE
 LOWER_CASE_WIDGET_HELP_TEXT = 'This value is derived by lowercasing another property.'
 PICKLE_WIDGET_HELP_TEXT = 'Only Decimals and python standard data types can be used in a pickled value.'
 
@@ -940,3 +947,4 @@ def list_pretty_iterator(pretty_iter):
 
 def prettify(data, indent=4, nest_level=0):
   return list_pretty_iterator(_pretty_merge_value(data, indent=indent, nest_level=nest_level))
+### END HUMBLE BUNDLE CODE CHANGE
