@@ -383,14 +383,18 @@ class PickleProperty(db.Property):
         else:
           value = field.data
         # If submitted differently, the value may not be a string => return directly
-        return field._value_to_object(value)
+        try:
+          return field._value_to_object(value)
+        except ValueError:
+          return value  # fall back to raw string value
 
       def _value_to_object(self, value):
         if not isinstance(value, basestring):
           return value
         from decimal import Decimal
+        import datetime
         try:
-          return eval(value, {'__builtins__': None}, {'Decimal': Decimal})
+          return eval(value, {'__builtins__': None}, {'Decimal': Decimal, 'datetime': datetime, 'True': True, 'False': False})
         except Exception:
           logging.exception('Could not convert value for saving, using None.')
           raise ValueError('Could not pickle set value.')
@@ -402,12 +406,15 @@ class PickleProperty(db.Property):
 
 
 def pickle_widget(field, *args, **kwargs):
-  kwargs.setdefault('rows', '10')
+  kwargs.setdefault('rows', '20')
   kwargs.setdefault('cols', '40')
   value = field._value()
   if value is None:
     value = {}
-  pretty_value = ''.join(prettify(value))
+  if isinstance(value, basestring):
+    pretty_value = value
+  else:
+    pretty_value = ''.join(prettify(value))
   from cgi import escape
   from appengine_admin import wtforms
   from wtforms import widgets
@@ -860,7 +867,7 @@ class ArrayProperty(db.UnindexedProperty):
 
 ### BEGIN HUMBLE BUNDLE CODE CHANGE
 LOWER_CASE_WIDGET_HELP_TEXT = 'This value is derived by lowercasing another property.'
-PICKLE_WIDGET_HELP_TEXT = 'Only Decimals and python standard data types can be used in a pickled value.'
+PICKLE_WIDGET_HELP_TEXT = 'Only Decimal, datetime.datetime, and built-in types can be used in a pickled value.'
 
 
 def pretty_dict(d, indent=0, nest_level=1):
