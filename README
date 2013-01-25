@@ -14,3 +14,8 @@ generally useful. They include:
 - ArrayProperty store array.array objects for lean and efficient POD type
   storage
 With aetycoon, you'll have all the properties you're ever likely to need.
+
+
+Dependencies:
+
+* https://github.com/humble/prettydata

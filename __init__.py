@@ -14,13 +14,14 @@
 
 import array
 import copy
-import logging
 import os
 import pickle
 import zlib
 
 from google.appengine.api import users
 from google.appengine.ext import db
+
+from prettydata import prettify
 
 
 def DerivedProperty(func=None, *args, **kwargs):
@@ -391,18 +392,53 @@ class PickleProperty(db.Property):
       def _value_to_object(self, value):
         if not isinstance(value, basestring):
           return value
-        from decimal import Decimal
-        import datetime
         try:
-          return eval(value, {'__builtins__': None}, {'Decimal': Decimal, 'datetime': datetime, 'True': True, 'False': False})
+          return value_to_pickle(value)
+        except ValueError:
+          raise
         except Exception:
-          logging.exception('Could not convert value for saving, using None.')
           raise ValueError('Could not pickle set value.')
 
       def process_formdata(self, valuelist):
         if valuelist:
           self.data = self._value_to_object(valuelist[0])
     return PickleField(**kwargs)
+
+
+def value_to_pickle(value):
+  from decimal import Decimal
+  import datetime
+  import inspect
+  try:
+    pickle_value = eval(
+      value,
+      {
+        '__builtins__': None
+      },
+      {
+        'datetime': datetime,
+        'Decimal': Decimal,
+        'False': False,
+        'True': True,
+      }
+    )
+    if inspect.isclass(pickle_value):
+      raise ValueError('Pickle value is not allowed to be a class.')
+    return pickle_value
+  except SyntaxError as e:
+    raise ValueError('Invalid syntax: %s' % e.args[0])
+  except NameError as e:
+    raise ValueError('You tried to use an unsupported type. (NameError: %s)' % e.args[0])
+  except TypeError as e:
+    if "'module' object is not callable" == e.args[0]:
+      raise ValueError('Maybe you tried to use datetime instead of datetime.datetime?')
+    raise ValueError('Unreckognized type: %s' % e.args[0])
+  except AttributeError as e:
+    raise ValueError('Attribute not found: %s' % e.args[0])
+  except (ZeroDivisionError, IndexError) as e:
+    raise ValueError(e.args[0])
+  except KeyError as e:
+    raise ValueError('Key error: %s' % e.args[0])
 
 
 def pickle_widget(field, *args, **kwargs):
@@ -868,90 +904,4 @@ class ArrayProperty(db.UnindexedProperty):
 ### BEGIN HUMBLE BUNDLE CODE CHANGE
 LOWER_CASE_WIDGET_HELP_TEXT = 'This value is derived by lowercasing another property.'
 PICKLE_WIDGET_HELP_TEXT = 'Only Decimal, datetime.datetime, and built-in types can be used in a pickled value.'
-
-
-def pretty_dict(d, indent=0, nest_level=1):
-  '''List-format string output to display a dict in a readable format.'''
-  if not d:
-    yield '{}'
-    return
-  sorted_items = d.items()
-  sorted_items.sort(key=lambda x: x[0])
-
-  yield '{\n'
-  first = True
-  for k, v in sorted_items:
-    if not first:
-      yield ",\n"
-    else:
-      first = False
-    if isinstance(k, unicode):
-      try:
-        repr_k = repr(str(k))
-      except UnicodeEncodeError:
-        repr_k = repr(k)
-    else:
-      repr_k = repr(k)
-    yield '{indent}{key}: '.format(indent=' ' * indent * nest_level, key=repr_k)
-    yield _pretty_merge_value(v, indent, nest_level)
-  yield "\n"
-  yield ' ' * indent * (nest_level - 1) + '}'
-
-
-def pretty_list(l, indent=0, nest_level=1):
-  '''List-format string output to display a list or tuple in a readable format.'''
-  if not l:
-    yield '[]' if isinstance(l, list) else 'tuple()'
-    return
-  if isinstance(l, list):
-    yield '[\n'
-  else:
-    yield '(\n'
-  first = True
-  for v in l:
-    if not first:
-      yield ",\n"
-    else:
-      first = False
-    yield ' ' * indent * nest_level
-    yield _pretty_merge_value(v, indent, nest_level)
-  yield "\n"
-  yield ' ' * indent * (nest_level - 1)
-  if isinstance(l, list):
-    yield ']'
-  else:
-    yield ')'
-
-
-def _pretty_merge_value(v, indent, nest_level):
-  '''Local use to merge known vaues into a pretty output.'''
-  if isinstance(v, dict):
-    yield pretty_dict(v, indent=indent, nest_level=nest_level + 1)
-  elif isinstance(v, (list, tuple)):
-    yield pretty_list(v, indent=indent, nest_level=nest_level + 1)
-  elif isinstance(v, unicode):  # Take out the u'' when unnecessary
-    try:
-      yield repr(str(v))
-    except UnicodeEncodeError:
-      yield repr(v)
-  elif isinstance(v, long):  # Take out the L when unnecessary
-    yield repr(int(v))
-  else:
-    yield repr(v)
-
-
-def list_pretty_iterator(pretty_iter):
-  l = []
-  from types import GeneratorType
-  for pretty_val in pretty_iter:
-    if isinstance(pretty_val, GeneratorType):
-      for iter_pretty_val in pretty_val:
-        l += list_pretty_iterator(iter_pretty_val)
-    else:
-      l.append(pretty_val)
-  return l
-
-
-def prettify(data, indent=4, nest_level=0):
-  return list_pretty_iterator(_pretty_merge_value(data, indent=indent, nest_level=nest_level))
 ### END HUMBLE BUNDLE CODE CHANGE
