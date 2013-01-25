@@ -14,13 +14,14 @@
 
 import array
 import copy
-import hashlib
-import logging
 import os
 import pickle
 import zlib
+
 from google.appengine.api import users
 from google.appengine.ext import db
+
+from prettydata import prettify
 
 
 def DerivedProperty(func=None, *args, **kwargs):
@@ -128,6 +129,35 @@ class LowerCaseProperty(_DerivedProperty):
     super(LowerCaseProperty, self).__init__(
         lambda self: property.__get__(self, type(self)).lower(),
         *args, **kwargs)
+    ### BEGIN HUMBLE BUNDLE CODE CHANGE
+    self.prop = property
+
+  @staticmethod
+  def wtforms_convert(model, prop, kwargs):
+    """Return a wtforms field appropriate for a LowerCase property.
+    """
+    from appengine_admin import wtforms
+    from wtforms import fields, widgets
+
+    class DisabledTextWidget(widgets.Input):
+      def __call__(widget, field, **kwargs):
+        value = 'Lower case <strong>%s</strong>' % prop.prop.name
+        kwargs['class'] = (kwargs.pop('class', '') + ' div-input').strip()
+        return widgets.core.HTMLString(
+          u'<div %s>%s</div><div class="help_text">%s</div>'
+          % (widgets.core.html_params(name=field.name, **kwargs), value, LOWER_CASE_WIDGET_HELP_TEXT))
+
+    class LowerCaseDerivedField(fields.TextField):
+      readonly = True
+      widget = DisabledTextWidget()
+
+      def _value(field):
+        value = prop.prop.__get__(prop, type(prop))
+        value = value.lower() if value else None
+        return value
+
+    return LowerCaseDerivedField(**kwargs)
+    ### END HUMBLE BUNDLE CODE CHANGE
 
 
 class LengthProperty(_DerivedProperty):
@@ -334,6 +364,102 @@ class PickleProperty(db.Property):
     instances."""
     return copy.copy(self.default)
 
+  ### BEGIN END HUMBLE BUNDLE CODE CHANGE
+  @staticmethod
+  def wtforms_convert(model, prop, kwargs):
+    """Return a wtforms field appropriate for a Pickle property.
+    """
+    from appengine_admin import wtforms
+    from wtforms import fields, widgets
+
+    class PickleField(fields.TextAreaField):
+      widget = pickle_widget
+
+      def _value(field):
+        """Convert a form value to a PickleProperty value."""
+        if field.raw_data:
+          value = field.raw_data
+          if isinstance(value, list):
+              value = value[0]
+        else:
+          value = field.data
+        # If submitted differently, the value may not be a string => return directly
+        try:
+          return field._value_to_object(value)
+        except ValueError:
+          return value  # fall back to raw string value
+
+      def _value_to_object(self, value):
+        if not isinstance(value, basestring):
+          return value
+        try:
+          return value_to_pickle(value)
+        except ValueError:
+          raise
+        except Exception:
+          raise ValueError('Could not pickle set value.')
+
+      def process_formdata(self, valuelist):
+        if valuelist:
+          self.data = self._value_to_object(valuelist[0])
+    return PickleField(**kwargs)
+
+
+def value_to_pickle(value):
+  from decimal import Decimal
+  import datetime
+  import inspect
+  try:
+    pickle_value = eval(
+      value,
+      {
+        '__builtins__': None
+      },
+      {
+        'datetime': datetime,
+        'Decimal': Decimal,
+        'False': False,
+        'True': True,
+      }
+    )
+    if inspect.isclass(pickle_value):
+      raise ValueError('Pickle value is not allowed to be a class.')
+    return pickle_value
+  except SyntaxError as e:
+    raise ValueError('Invalid syntax: %s' % e.args[0])
+  except NameError as e:
+    raise ValueError('You tried to use an unsupported type. (NameError: %s)' % e.args[0])
+  except TypeError as e:
+    if "'module' object is not callable" == e.args[0]:
+      raise ValueError('Maybe you tried to use datetime instead of datetime.datetime?')
+    raise ValueError('Unreckognized type: %s' % e.args[0])
+  except AttributeError as e:
+    raise ValueError('Attribute not found: %s' % e.args[0])
+  except (ZeroDivisionError, IndexError) as e:
+    raise ValueError(e.args[0])
+  except KeyError as e:
+    raise ValueError('Key error: %s' % e.args[0])
+
+
+def pickle_widget(field, *args, **kwargs):
+  kwargs.setdefault('rows', '20')
+  kwargs.setdefault('cols', '40')
+  value = field._value()
+  if value is None:
+    value = {}
+  if isinstance(value, basestring):
+    pretty_value = value
+  else:
+    pretty_value = ''.join(prettify(value))
+  from cgi import escape
+  from appengine_admin import wtforms
+  from wtforms import widgets
+  return widgets.core.HTMLString(
+    u'<textarea %s>%s</textarea><div class="help_text">%s</div>'
+    % (widgets.core.html_params(name=field.name, **kwargs), escape(pretty_value), PICKLE_WIDGET_HELP_TEXT))
+
+
+### END HUMBLE BUNDLE CODE CHANGE
 class SetProperty(db.ListProperty):
   """A property that stores a set of things.
 
@@ -379,27 +505,42 @@ class SetProperty(db.ListProperty):
     if value is not None:
       return set(super(SetProperty, self).make_value_from_datastore(value))
 
-  def get_form_field(self, **kwargs):
-    from django import newforms as forms
-    defaults = {'widget': forms.Textarea,
-                'initial': ''}
-    defaults.update(kwargs)
-    return super(SetProperty, self).get_form_field(**defaults)
+  ### BEGIN HUMBLE BUNDLE CODE CHANGE
+  @staticmethod
+  def wtforms_convert(model, prop, kwargs):
+    """Return a wtforms field appropriate for a Pickle property.
+    """
+    from appengine_admin import wtforms
+    from wtforms import fields, validators
 
-  def get_value_for_form(self, instance):
-    value = super(SetProperty, self).get_value_for_form(instance)
-    if not value:
-      return None
-    if isinstance(value, set):
-      value = '\n'.join(value)
-    return value
+    def validate_set(form, field):
+      try:
+        prop.validate_list_contents(field.data)
+      except db.BadValueError as e:
+        raise validators.ValidationError(*e.args)
 
-  def make_value_from_form(self, value):
-    if not value:
-      return []
-    if isinstance(value, basestring):
-      value = value.splitlines()
-    return set(value)
+    class SetField(fields.TextAreaField):
+      """A field for ``SetProperty``."""
+      def __init__(self, label=None, validators=None, **kwargs):
+        validators = validators or []
+        validators.append(validate_set)
+        super(SetField, self).__init__(label=label, validators=validators, **kwargs)
+
+      def _value(field):
+        if field.raw_data:
+          return field.raw_data[0]
+        else:
+          return field.data and '\n'.join(map(str, set(field.data))) or ''
+
+      def process_formdata(self, valuelist):
+        if valuelist:
+          try:
+            self.data = valuelist[0].splitlines()
+            self.data = set(map(prop.item_type, self.data))
+          except ValueError:
+            raise ValueError(self.gettext('Not a valid set'))
+    return SetField(**kwargs)
+    ### END HUMBLE BUNDLE CODE CHANGE
 
 
 class InvalidDomainError(Exception):
@@ -408,66 +549,66 @@ class InvalidDomainError(Exception):
 
 class CurrentDomainProperty(db.Property):
   """A property that restricts access to the current domain.
-  
+
   Example usage:
-  
+
   >>> class DomainModel(db.Model):
   ...   domain = CurrentDomainProperty()
-  
+
   >>> os.environ['HTTP_HOST'] = 'domain1'
   >>> model = DomainModel()
-  
+
   The domain is set automatically:
-  
+
   >>> model.domain
   u'domain1'
-  
+
   You cannot change the domain:
-  
+
   >>> model.domain = 'domain2'  # doctest: +ELLIPSIS
   Traceback (most recent call last):
       ...
   InvalidDomainError: Domain 'domain1' attempting to illegally access data for domain 'domain2'
-  
+
   >>> key = model.put()
   >>> model = DomainModel.get(key)
   >>> model.domain
   u'domain1'
-  
+
   You cannot write the data from another domain:
-  
+
   >>> os.environ['HTTP_HOST'] = 'domain2'
   >>> model.put() # doctest: +ELLIPSIS
   Traceback (most recent call last):
       ...
   InvalidDomainError: Domain 'domain2' attempting to allegally modify data for domain 'domain1'
-  
+
   Nor can you read it:
-  
+
   >>> DomainModel.get(key)  # doctest: +ELLIPSIS
   Traceback (most recent call last):
       ...
   InvalidDomainError: Domain 'domain2' attempting to illegally access data for domain 'domain1'
-  
+
   Admin users can read and write data for other domains:
-  
+
   >>> os.environ['USER_IS_ADMIN'] = '1'
   >>> model = DomainModel.get(key)
   >>> model.put()  # doctest: +ELLIPSIS
   datastore_types.Key.from_path(u'DomainModel', ...)
-  
+
   You can also define models that should permit read or write access from
   other domains:
-  
+
   >>> os.environ['USER_IS_ADMIN'] = '0'
   >>> class DomainModel2(db.Model):
   ...   domain = CurrentDomainProperty(allow_read=True, allow_write=True)
-  
+
   >>> model = DomainModel2()
   >>> model.domain
   u'domain2'
   >>> key = model.put()
-  
+
   >>> os.environ['HTTP_HOST'] = 'domain3'
   >>> model = DomainModel2.get(key)
   >>> model.put()  # doctest: +ELLIPSIS
@@ -476,7 +617,7 @@ class CurrentDomainProperty(db.Property):
 
   def __init__(self, allow_read=False, allow_write=False, *args, **kwargs):
     """Constructor.
-    
+
     Args:
       allow_read: If True, allow entities with this property to be read, but not
         written, from other domains.
@@ -501,7 +642,7 @@ class CurrentDomainProperty(db.Property):
     value = super(CurrentDomainProperty, self).get_value_for_datastore(
         model_instance)
     if (value != os.environ['HTTP_HOST'] and not users.is_current_user_admin()
-        and not self.allow_write):
+          and not self.allow_write):
       raise InvalidDomainError(
           "Domain '%s' attempting to allegally modify data for domain '%s'"
           % (os.environ['HTTP_HOST'], value))
@@ -561,9 +702,9 @@ class ChoiceProperty(db.IntegerProperty):
     """
     super(ChoiceProperty, self).__init__(*args, **kwargs)
     self.index_to_choice = dict(choices)
-    self.choice_to_index = dict((c,i) for i,c in self.index_to_choice.iteritems())
+    self.choice_to_index = dict((c, i) for i, c in self.index_to_choice.iteritems())
     if make_choice_attrs:
-      for i,c in self.index_to_choice.iteritems():
+      for i, c in self.index_to_choice.iteritems():
         if isinstance(c, basestring):
           setattr(self, c.upper(), i)
 
@@ -586,7 +727,7 @@ class ChoiceProperty(db.IntegerProperty):
       index = self.c2i(value)
     except KeyError:
       raise db.BadValueError('Property %s must be one of the allowed choices: %s' %
-                          (self.name, self.get_choices()))
+                             (self.name, self.get_choices()))
     super(ChoiceProperty, self).__set__(model_instance, index)
 
   def get_value_for_datastore(self, model_instance):
@@ -635,6 +776,7 @@ class CompressedProperty(db.UnindexedProperty):
     """Reverse of value_to_str.  By default, returns s unchanged."""
     return s
 
+
 class CompressedBlobProperty(CompressedProperty):
   """A byte string that will be stored in a compressed form.
 
@@ -667,6 +809,7 @@ class CompressedBlobProperty(CompressedProperty):
 
   def __init__(self, level=6, *args, **kwargs):
     super(CompressedBlobProperty, self).__init__(level, *args, **kwargs)
+
 
 class CompressedTextProperty(CompressedProperty):
   """A string that will be stored in a compressed form (encoded as UTF-8).
@@ -704,6 +847,7 @@ class CompressedTextProperty(CompressedProperty):
   @staticmethod
   def str_to_value(s):
     return s.decode('utf-8')
+
 
 class ArrayProperty(db.UnindexedProperty):
   """An array property that is stored as a string.
@@ -756,3 +900,8 @@ class ArrayProperty(db.UnindexedProperty):
   def default_value(self):
     return array.array(self._typecode,
                        super(ArrayProperty, self).default_value())
+
+### BEGIN HUMBLE BUNDLE CODE CHANGE
+LOWER_CASE_WIDGET_HELP_TEXT = 'This value is derived by lowercasing another property.'
+PICKLE_WIDGET_HELP_TEXT = 'Only Decimal, datetime.datetime, and built-in types can be used in a pickled value.'
+### END HUMBLE BUNDLE CODE CHANGE
